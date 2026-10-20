@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Never commit npm auth tokens
+.npmrc
+
+# Local dev scripts (may contain real API keys)
+test-*.ts
+test_*.py
+
+# Editor / OS
+.DS_Store
+*.log

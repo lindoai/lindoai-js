@@ -1,0 +1,83 @@
+name: Publish to npm
+
+# Runs in the standalone `lindoai/lindoai-js` repo (synced from the monorepo
+# at `packages/sdks/typescript/`). On every push to `main`, if `package.json`
+# has a new version, builds + tests + publishes `lindoai` to npm.
+#
+# Auth: uses the org-level `NPM_TOKEN` secret configured under
+# https://github.com/organizations/lindoai/settings/secrets/actions.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed for npm provenance attestations (works alongside a classic
+      # token — OIDC is used only to sign the provenance, not to authenticate
+      # the publish itself).
+      id-token: write
+      # Needed for softprops/action-gh-release to cut a GitHub Release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Check if version already published on npm
+        id: check
+        run: |
+          PUBLISHED=$(npm view lindoai version 2>/dev/null || echo "0.0.0")
+          if [ "${{ steps.version.outputs.version }}" = "$PUBLISHED" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        if: steps.check.outputs.skip == 'false'
+        run: npm ci
+
+      # tsup compiles src/ → dist/ (both CJS + ESM + .d.ts). Required because
+      # `dist/` is gitignored and `files: ["dist"]` in package.json.
+      - name: Build
+        if: steps.check.outputs.skip == 'false'
+        run: npm run build
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip == 'false'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.skip == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body: |
+            ## `lindoai` v${{ steps.version.outputs.version }}
+
+            Install:
+
+            ```bash
+            npm install lindoai@${{ steps.version.outputs.version }}
+            ```
+
+            See [the docs](https://lindo.ai) for usage.
+          make_latest: true
+
+      - name: Skip notice
+        if: steps.check.outputs.skip == 'true'
+        run: echo "Version ${{ steps.version.outputs.version }} already published, skipping."
